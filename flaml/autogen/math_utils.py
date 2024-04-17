@@ -1,5 +1,6 @@
 from typing import Optional
-from flaml.autogen import oai, DEFAULT_MODEL
+
+from flaml.autogen import DEFAULT_MODEL, oai
 
 _MATH_PROMPT = "{problem} Solve the problem carefully. Simplify your answer as much as possible. Put the final answer in \\boxed{{}}."
 _MATH_CONFIG = {
@@ -9,7 +10,7 @@ _MATH_CONFIG = {
 
 
 def solve_problem(problem: str, **config) -> str:
-    """(work in progress) Solve the math problem.
+    """(Experimental) Solve the math problem.
 
     Args:
         problem (str): The problem statement.
@@ -28,7 +29,9 @@ def remove_boxed(string: str) -> Optional[str]:
     """Source: https://github.com/hendrycks/math
     Extract the text within a \\boxed{...} environment.
     Example:
-    >>> remove_boxed(\\boxed{\\frac{2}{3}})
+
+    >> remove_boxed("\\boxed{\\frac{2}{3}}")
+
     \\frac{2}{3}
     """
     left = "\\boxed{"

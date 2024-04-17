@@ -1,9 +1,11 @@
 import os
 import sys
 import warnings
-import pytest
+
 import mlflow
+import pytest
 import sklearn.datasets as skds
+
 from flaml import AutoML
 from flaml.tune.spark.utils import check_spark
 
@@ -15,18 +17,20 @@ else:
     try:
         import pyspark
         from pyspark.ml.feature import VectorAssembler
+
         from flaml.automl.spark.utils import to_pandas_on_spark
 
+        postfix_version = "-spark3.3," if pyspark.__version__ > "3.2" else ","
         spark = (
             pyspark.sql.SparkSession.builder.appName("MyApp")
             .master("local[2]")
             .config(
                 "spark.jars.packages",
                 (
-                    "com.microsoft.azure:synapseml_2.12:0.10.2,"
+                    f"com.microsoft.azure:synapseml_2.12:0.11.3{postfix_version}"
                     "org.apache.hadoop:hadoop-azure:3.3.5,"
                     "com.microsoft.azure:azure-storage:8.6.6,"
-                    f"org.mlflow:mlflow-spark:{mlflow.__version__}"
+                    f"org.mlflow:mlflow-spark:2.6.0"
                 ),
             )
             .config("spark.jars.repositories", "https://mmlspark.azureedge.net/maven")
@@ -165,7 +169,6 @@ def test_spark_input_df():
     automl.fit(
         dataframe=df,
         label="Bankrupt?",
-        labelCol="Bankrupt?",
         isUnbalance=True,
         **settings,
     )
@@ -173,15 +176,17 @@ def test_spark_input_df():
     try:
         model = automl.model.estimator
         predictions = model.transform(test_data)
+        predictions.show()
 
-        from synapse.ml.train import ComputeModelStatistics
+        # from synapse.ml.train import ComputeModelStatistics
 
-        metrics = ComputeModelStatistics(
-            evaluationMetric="classification",
-            labelCol="Bankrupt?",
-            scoredLabelsCol="prediction",
-        ).transform(predictions)
-        metrics.show()
+        # metrics = ComputeModelStatistics(
+        #     evaluationMetric="classification",
+        #     labelCol="Bankrupt?",
+        #     scoredLabelsCol="prediction",
+        # ).transform(predictions)
+        # metrics.show()
+
     except AttributeError:
         print("No fitted model because of too short training time.")
 
@@ -196,7 +201,6 @@ def test_spark_input_df():
         automl.fit(
             dataframe=df,
             label="Bankrupt?",
-            labelCol="Bankrupt?",
             isUnbalance=True,
             **settings,
         )

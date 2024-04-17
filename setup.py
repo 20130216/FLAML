@@ -1,5 +1,6 @@
-import setuptools
 import os
+
+import setuptools
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -14,7 +15,7 @@ with open(os.path.join(here, "flaml/version.py")) as fp:
 __version__ = version["__version__"]
 
 install_requires = [
-    "NumPy>=1.17.0rc1",
+    "NumPy>=1.17",
 ]
 
 
@@ -84,12 +85,15 @@ setuptools.setup(
             "tensorboardX==2.6",  # test_forecast_panel
             "requests<2.29.0",  # https://github.com/docker/docker-py/issues/3113
             "packaging",
-            "pydantic",
+            "pydantic==1.10.9",
             "sympy",
             "wolframalpha",
         ],
         "catboost": ["catboost>=0.26"],
-        "blendsearch": ["optuna==2.8.0"],
+        "blendsearch": [
+            "optuna==2.8.0",
+            "packaging",
+        ],
         "ray": [
             "ray[tune]~=1.13",
         ],
@@ -134,8 +138,16 @@ setuptools.setup(
         ],
         "benchmark": ["catboost>=0.26", "psutil==5.8.0", "xgboost==1.3.3", "pandas==1.1.4"],
         "openai": ["openai==0.27.8", "diskcache"],
-        "autogen": ["openai==0.27.8", "diskcache", "docker"],
-        "mathchat": ["openai==0.27.8", "diskcache", "docker", "sympy", "pydantic", "wolframalpha"],
+        "autogen": ["openai==0.27.8", "diskcache", "termcolor"],
+        "mathchat": ["openai==0.27.8", "diskcache", "termcolor", "sympy", "pydantic==1.10.9", "wolframalpha"],
+        "retrievechat": [
+            "openai==0.27.8",
+            "diskcache",
+            "termcolor",
+            "chromadb",
+            "tiktoken",
+            "sentence_transformers",
+        ],
         "synapse": [
             "joblibspark>=0.5.0",
             "optuna==2.8.0",

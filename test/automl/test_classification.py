@@ -1,13 +1,14 @@
 import unittest
+from datetime import datetime
+
 import numpy as np
+import pandas as pd
 import scipy.sparse
 from sklearn.datasets import load_breast_cancer
 from sklearn.model_selection import train_test_split
-import pandas as pd
-from datetime import datetime
-from flaml import AutoML
+
+from flaml import AutoML, tune
 from flaml.automl.model import LGBMEstimator
-from flaml import tune
 
 
 class MyLargeLGBM(LGBMEstimator):
@@ -194,6 +195,22 @@ class TestClassification(unittest.TestCase):
         automl.fit(X, y, **automl_settings)
         del automl
 
+        automl = AutoML()
+        automl_settings = {
+            "time_budget": 3,
+            "task": "classification",
+            "n_jobs": 1,
+            "estimator_list": ["histgb"],
+            "eval_method": "cv",
+            "n_splits": 3,
+            "metric": "accuracy",
+            "log_training_metric": True,
+            # "verbose": 4,
+            "ensemble": True,
+        }
+        automl.fit(X, y, **automl_settings)
+        del automl
+
     def test_binary(self):
         automl_experiment = AutoML()
         automl_settings = {
@@ -277,12 +294,15 @@ class TestClassification(unittest.TestCase):
         import subprocess
         import sys
 
+        current_xgboost_version = xgb.__version__
         subprocess.check_call([sys.executable, "-m", "pip", "install", "xgboost==1.3.3", "--user"])
         automl = AutoML()
         automl.fit(X_train=X_train, y_train=y_train, **automl_settings)
         print(automl.feature_names_in_)
         print(automl.feature_importances_)
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-U", "xgboost", "--user"])
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-U", f"xgboost=={current_xgboost_version}", "--user"]
+        )
 
     def test_ray_classification(self):
         X, y = load_breast_cancer(return_X_y=True)

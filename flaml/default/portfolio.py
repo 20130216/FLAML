@@ -1,11 +1,13 @@
-import pandas as pd
-import numpy as np
 import argparse
-from pathlib import Path
 import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
 from sklearn.preprocessing import RobustScaler
+
 from flaml.default import greedy
-from flaml.default.regret import load_result, build_regret
+from flaml.default.regret import build_regret, load_result
 from flaml.version import __version__
 
 regret_bound = 0.01
@@ -42,7 +44,7 @@ def config_predictor_tuple(tasks, configs, meta_features, regret_matrix):
         .apply(lambda row: row.apply(lambda x: (x, row.name)), axis=1)
     )
     print(regret)
-    preferences = np.argsort(regret, axis=0)
+    preferences = pd.DataFrame(np.argsort(regret, axis=0), columns=regret.columns)
     print(preferences)
     return (meta_features_norm, preferences, proc)
 
@@ -119,12 +121,11 @@ def serialize(configs, regret, meta_features, output_file, config_path):
         "portfolio": portfolio,
         "preprocessing": proc,
         "neighbors": [
-            {"features": tuple(x), "choice": _filter(preferences[y], regret[y])}
+            {"features": x.tolist(), "choice": _filter(preferences[y], regret[y])}
             for x, y in zip(meta_features_norm.to_records(index=False), preferences.columns)
         ],
         "configsource": list(configs),
     }
-
     with open(output_file, "w+") as f:
         json.dump(meta_predictor, f, indent=4)
     return meta_predictor

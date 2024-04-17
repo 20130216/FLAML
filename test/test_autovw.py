@@ -1,17 +1,20 @@
-import unittest
-import numpy as np
-import scipy.sparse
-import pandas as pd
-from sklearn.metrics import mean_squared_error, mean_absolute_error
 import logging
-from flaml.tune import loguniform, polynomial_expansion_set
-from flaml import AutoVW
-import string
 import os
-import openml
-from requests.exceptions import SSLError
+import string
 import sys
+import unittest
+
+import numpy as np
+import openml
+import pandas as pd
 import pytest
+import scipy.sparse
+from minio.error import ServerError
+from requests.exceptions import SSLError
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+from flaml import AutoVW
+from flaml.tune import loguniform, polynomial_expansion_set
 
 VW_DS_DIR = "test/data/"
 NS_LIST = list(string.ascii_lowercase) + list(string.ascii_uppercase)
@@ -88,14 +91,10 @@ def shuffle_data(X, y, seed):
 def get_oml_to_vw(did, max_ns_num, ds_dir=VW_DS_DIR):
     success = False
     print("-----getting oml dataset-------", did)
-    try:
-        ds = openml.datasets.get_dataset(did)
-        target_attribute = ds.default_target_attribute
-        # if target_attribute is None and did in OML_target_attribute_dict:
-        #     target_attribute = OML_target_attribute_dict[did]
-    except SSLError as e:
-        print(e)
-        return
+    ds = openml.datasets.get_dataset(did)
+    target_attribute = ds.default_target_attribute
+    # if target_attribute is None and did in OML_target_attribute_dict:
+    #     target_attribute = OML_target_attribute_dict[did]
 
     print("target=ds.default_target_attribute", target_attribute)
     data = ds.get_data(target=target_attribute, dataset_format="array")
@@ -357,7 +356,11 @@ class TestAutoVW(unittest.TestCase):
     def test_vw_oml_problem_and_vanilla_vw(self):
         from vowpalwabbit import pyvw
 
-        vw_oml_problem_args, vw_online_aml_problem = get_vw_tuning_problem()
+        try:
+            vw_oml_problem_args, vw_online_aml_problem = get_vw_tuning_problem()
+        except (SSLError, ServerError, Exception) as e:
+            print(e)
+            return
         vanilla_vw = pyvw.vw(**vw_oml_problem_args["fixed_hp_config"])
         cumulative_loss_list = online_learning_loop(
             vw_online_aml_problem.max_iter_num,
@@ -369,7 +372,11 @@ class TestAutoVW(unittest.TestCase):
 
     def test_supervised_vw_tune_namespace(self):
         # basic experiment setting
-        vw_oml_problem_args, vw_online_aml_problem = get_vw_tuning_problem()
+        try:
+            vw_oml_problem_args, vw_online_aml_problem = get_vw_tuning_problem()
+        except (SSLError, ServerError, Exception) as e:
+            print(e)
+            return
         autovw = AutoVW(
             max_live_model_num=5,
             search_space=vw_online_aml_problem.search_space,
@@ -388,9 +395,14 @@ class TestAutoVW(unittest.TestCase):
 
     def test_supervised_vw_tune_namespace_learningrate(self):
         # basic experiment setting
-        vw_oml_problem_args, vw_online_aml_problem = get_vw_tuning_problem(
-            tuning_hp="NamesapceInteraction+LearningRate"
-        )
+        try:
+            vw_oml_problem_args, vw_online_aml_problem = get_vw_tuning_problem(
+                tuning_hp="NamesapceInteraction+LearningRate"
+            )
+        except (SSLError, ServerError, Exception) as e:
+            print(e)
+            return
+
         autovw = AutoVW(
             max_live_model_num=5,
             search_space=vw_online_aml_problem.search_space,

@@ -1,9 +1,10 @@
 import unittest
+
 import numpy as np
 from sklearn.datasets import load_iris
-from flaml import AutoML
+
+from flaml import AutoML, tune
 from flaml.automl.model import LGBMEstimator
-from flaml import tune
 
 
 class TestWarmStart(unittest.TestCase):
@@ -106,10 +107,19 @@ class TestWarmStart(unittest.TestCase):
         print(automl.best_config_per_estimator)
 
     def test_FLAML_sample_size_in_starting_points(self):
-        from flaml.automl.data import load_openml_dataset
-        from flaml import AutoML
+        from minio.error import ServerError
+        from openml.exceptions import OpenMLServerException
+        from requests.exceptions import ChunkedEncodingError, SSLError
 
-        X_train, X_test, y_train, y_test = load_openml_dataset(dataset_id=1169, data_dir="./")
+        from flaml import AutoML
+        from flaml.automl.data import load_openml_dataset
+
+        try:
+            X_train, X_test, y_train, y_test = load_openml_dataset(dataset_id=1169, data_dir="./")
+        except (OpenMLServerException, ChunkedEncodingError, SSLError, ServerError, Exception):
+            from sklearn.datasets import load_wine
+
+            X_train, y_train = load_wine(return_X_y=True)
 
         automl_settings = {
             "time_budget": 3,

@@ -3,40 +3,41 @@
 #  * Licensed under the MIT License. See LICENSE file in the
 #  * project root for license information.
 from __future__ import annotations
-import time
+
+import json
+import logging
 import os
 import sys
-from typing import Callable, List, Union, Optional
+import time
 from functools import partial
+from typing import Callable, List, Optional, Union
+
 import numpy as np
-import logging
-import json
 
-from flaml.automl.state import SearchState, AutoMLState
+from flaml import tune
+from flaml.automl.logger import logger, logger_formatter
 from flaml.automl.ml import train_estimator
-
-from flaml.automl.time_series import TimeSeriesDataset
-from flaml.config import (
-    MIN_SAMPLE_TRAIN,
-    MEM_THRES,
-    RANDOM_SEED,
-    SMALL_LARGE_THRES,
-    CV_HOLDOUT_THRESHOLD,
-    SPLIT_RATIO,
-    N_SPLITS,
-    SAMPLE_MULTIPLY_FACTOR,
-)
+from flaml.automl.spark import DataFrame, Series, psDataFrame, psSeries
+from flaml.automl.state import AutoMLState, SearchState
+from flaml.automl.task.factory import task_factory
 
 # TODO check to see when we can remove these
 from flaml.automl.task.task import CLASSIFICATION, Task
-from flaml.automl.task.factory import task_factory
-from flaml import tune
-from flaml.automl.logger import logger, logger_formatter
+from flaml.automl.time_series import TimeSeriesDataset
 from flaml.automl.training_log import training_log_reader, training_log_writer
+from flaml.config import (
+    CV_HOLDOUT_THRESHOLD,
+    MEM_THRES,
+    MIN_SAMPLE_TRAIN,
+    N_SPLITS,
+    RANDOM_SEED,
+    SAMPLE_MULTIPLY_FACTOR,
+    SMALL_LARGE_THRES,
+    SPLIT_RATIO,
+)
 from flaml.default import suggest_learner
-from flaml.version import __version__ as flaml_version
-from flaml.automl.spark import psDataFrame, psSeries, DataFrame, Series
 from flaml.tune.spark.utils import check_spark, get_broadcast_data
+from flaml.version import __version__ as flaml_version
 
 ERROR = (
     DataFrame is None and ImportError("please install flaml[automl] option to use the flaml.automl package.") or None
@@ -230,9 +231,9 @@ class AutoML(BaseEstimator):
         ```
 
             seed: int or None, default=None | The random seed for hpo.
-            n_concurrent_trials: [Experimental] int, default=1 | The number of
+            n_concurrent_trials: [In preview] int, default=1 | The number of
                 concurrent trials. When n_concurrent_trials > 1, flaml performes
-                [parallel tuning](../../Use-Cases/Task-Oriented-AutoML#parallel-tuning)
+                [parallel tuning](/docs/Use-Cases/Task-Oriented-AutoML#parallel-tuning)
                 and installation of ray or spark is required: `pip install flaml[ray]`
                 or `pip install flaml[spark]`. Please check
                 [here](https://spark.apache.org/docs/latest/api/python/getting_started/install.html)
@@ -246,7 +247,7 @@ class AutoML(BaseEstimator):
                 search is considered to converge.
             force_cancel: boolean, default=False | Whether to forcely cancel Spark jobs if the
                 search time exceeded the time budget.
-            append_log: boolean, default=False | Whetehr to directly append the log
+            append_log: boolean, default=False | Whether to directly append the log
                 records to the input log file if it exists.
             auto_augment: boolean, default=True | Whether to automatically
                 augment rare classes.
@@ -277,7 +278,7 @@ class AutoML(BaseEstimator):
                 the metrics_to_log dictionary returned by a customized metric function.
                 The customized metric function shall be provided via the `metric` key word
                 argument of the fit() function or the automl constructor.
-                Find an example in the 4th constraint type in this [doc](../../Use-Cases/Task-Oriented-AutoML#constraint).
+                Find an example in the 4th constraint type in this [doc](/docs/Use-Cases/Task-Oriented-AutoML#constraint).
                 If `pred_time_limit` is provided as one of keyword arguments to fit() function or
                 the automl constructor, flaml will automatically (and under the hood)
                 add it as an additional element in the metric_constraints. Essentially 'pred_time_limit'
@@ -476,12 +477,12 @@ class AutoML(BaseEstimator):
 
     @property
     def feature_transformer(self):
-        """Returns AutoML Transformer"""
+        """Returns feature transformer which is used to preprocess data before applying training or inference."""
         return getattr(self, "_transformer", None)
 
     @property
     def label_transformer(self):
-        """Returns AutoML label transformer"""
+        """Returns label transformer which is used to preprocess labels before scoring, and inverse transform labels after inference."""
         return getattr(self, "_label_transformer", None)
 
     @property
@@ -606,7 +607,7 @@ class AutoML(BaseEstimator):
 
         Args:
             learner_name: A string of the learner's name.
-            learner_class: A subclass of flaml.model.BaseEstimator.
+            learner_class: A subclass of flaml.automl.model.BaseEstimator.
         """
         self._state.learner_classes[learner_name] = learner_class
 
@@ -1366,9 +1367,9 @@ class AutoML(BaseEstimator):
         ```
 
             seed: int or None, default=None | The random seed for hpo.
-            n_concurrent_trials: [Experimental] int, default=1 | The number of
+            n_concurrent_trials: [In preview] int, default=1 | The number of
                 concurrent trials. When n_concurrent_trials > 1, flaml performes
-                [parallel tuning](../../Use-Cases/Task-Oriented-AutoML#parallel-tuning)
+                [parallel tuning](/docs/Use-Cases/Task-Oriented-AutoML#parallel-tuning)
                 and installation of ray or spark is required: `pip install flaml[ray]`
                 or `pip install flaml[spark]`. Please check
                 [here](https://spark.apache.org/docs/latest/api/python/getting_started/install.html)
@@ -1381,7 +1382,7 @@ class AutoML(BaseEstimator):
             early_stop: boolean, default=False | Whether to stop early if the
                 search is considered to converge.
             force_cancel: boolean, default=False | Whether to forcely cancel the PySpark job if overtime.
-            append_log: boolean, default=False | Whetehr to directly append the log
+            append_log: boolean, default=False | Whether to directly append the log
                 records to the input log file if it exists.
             auto_augment: boolean, default=True | Whether to automatically
                 augment rare classes.
@@ -1683,7 +1684,8 @@ class AutoML(BaseEstimator):
             self._state.fit_kwargs,
             self._state.groups,
         )
-        logger.info(f"Data split method: {self._split_type}")
+        if X_val is not None:
+            logger.info(f"Data split method: {self._split_type}")
         eval_method = self._decide_eval_method(eval_method, time_budget)
         self._state.eval_method = eval_method
         logger.info("Evaluation method: {}".format(eval_method))
@@ -1785,6 +1787,7 @@ class AutoML(BaseEstimator):
         else:
             error_metric = "customized metric"
         logger.info(f"Minimizing error metric: {error_metric}")
+        self._state.error_metric = error_metric
 
         is_spark_dataframe = isinstance(X_train, psDataFrame) or isinstance(dataframe, psDataFrame)
         estimator_list = task.default_estimator_list(estimator_list, is_spark_dataframe)
@@ -2159,6 +2162,14 @@ class AutoML(BaseEstimator):
                 mlflow.log_metric("best_validation_loss", search_state.best_loss)
                 mlflow.log_param("best_config", search_state.best_config)
                 mlflow.log_param("best_learner", self._best_estimator)
+                mlflow.log_metric(
+                    self._state.metric if isinstance(self._state.metric, str) else self._state.error_metric,
+                    1 - search_state.val_loss
+                    if self._state.error_metric.startswith("1-")
+                    else -search_state.val_loss
+                    if self._state.error_metric.startswith("-")
+                    else search_state.val_loss,
+                )
 
     def _search_sequential(self):
         try:
@@ -2637,7 +2648,7 @@ class AutoML(BaseEstimator):
             if self._estimator_index == len(estimator_list):
                 self._estimator_index = 0
             return estimator_list[self._estimator_index]
-        min_estimated_cost, selected = np.Inf, None
+        min_estimated_cost, selected = np.inf, None
         inv = []
         untried_exists = False
         for i, estimator in enumerate(estimator_list):

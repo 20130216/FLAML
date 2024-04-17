@@ -2,36 +2,43 @@
 #  * Copyright (c) FLAML authors. All rights reserved.
 #  * Licensed under the MIT License. See LICENSE file in the
 #  * project root for license information.
+import logging
+import math
+import os
+import shutil
+import signal
+import sys
+import time
 from contextlib import contextmanager
 from functools import partial
-import signal
-import os
 from typing import Callable, List, Union
+
 import numpy as np
-import time
-import logging
-import shutil
-import sys
-import math
+
 from flaml import tune
 from flaml.automl.data import (
     group_counts,
 )
+from flaml.automl.task.factory import task_factory
 from flaml.automl.task.task import (
-    Task,
+    NLG_TASKS,
     SEQCLASSIFICATION,
     SEQREGRESSION,
-    TOKENCLASSIFICATION,
     SUMMARIZATION,
-    NLG_TASKS,
+    TOKENCLASSIFICATION,
+    Task,
 )
-from flaml.automl.task.factory import task_factory
 
 try:
-    from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-    from sklearn.ensemble import ExtraTreesRegressor, ExtraTreesClassifier
-    from sklearn.linear_model import LogisticRegression
     from sklearn.dummy import DummyClassifier, DummyRegressor
+    from sklearn.ensemble import (
+        ExtraTreesClassifier,
+        ExtraTreesRegressor,
+        RandomForestClassifier,
+        RandomForestRegressor,
+    )
+    from sklearn.linear_model import LogisticRegression
+    from xgboost import __version__ as xgboost_version
 except ImportError:
     pass
 
@@ -40,13 +47,14 @@ try:
 except ImportError:
     pass
 
-from flaml.automl.spark import psDataFrame, sparkDataFrame, psSeries, ERROR as SPARK_ERROR, DataFrame, Series
-from flaml.automl.spark.utils import len_labels, to_pandas_on_spark
+from flaml.automl.spark import ERROR as SPARK_ERROR
+from flaml.automl.spark import DataFrame, Series, psDataFrame, psSeries, sparkDataFrame
 from flaml.automl.spark.configs import (
     ParamList_LightGBM_Classifier,
-    ParamList_LightGBM_Regressor,
     ParamList_LightGBM_Ranker,
+    ParamList_LightGBM_Regressor,
 )
+from flaml.automl.spark.utils import len_labels, to_pandas_on_spark
 
 if DataFrame is not None:
     from pandas import to_datetime
@@ -59,6 +67,11 @@ try:
     import resource
 except ImportError:
     resource = None
+
+try:
+    from lightgbm import LGBMClassifier, LGBMRanker, LGBMRegressor
+except ImportError:
+    LGBMClassifier = LGBMRegressor = LGBMRanker = None
 
 logger = logging.getLogger("flaml.automl")
 # FREE_MEM_RATIO = 0.2
@@ -207,10 +220,10 @@ class BaseEstimator:
         model = self.estimator_class(**self.params)
         if logger.level == logging.DEBUG:
             # xgboost 1.6 doesn't display all the params in the model str
-            logger.debug(f"flaml.model - {model} fit started with params {self.params}")
+            logger.debug(f"flaml.automl.model - {model} fit started with params {self.params}")
         model.fit(X_train, y_train, **kwargs)
         if logger.level == logging.DEBUG:
-            logger.debug(f"flaml.model - {model} fit finished")
+            logger.debug(f"flaml.automl.model - {model} fit finished")
         train_time = time.time() - current_time
         self._model = model
         return train_time
@@ -314,8 +327,7 @@ class BaseEstimator:
         Returns:
             The evaluation score on the validation dataset.
         """
-        from .ml import metric_loss_score
-        from .ml import is_min_metric
+        from .ml import is_min_metric, metric_loss_score
 
         if self._model is not None:
             if self._task == "rank":
@@ -408,6 +420,7 @@ class SparkEstimator(BaseEstimator):
         X_train: Union[psDataFrame, sparkDataFrame],
         y_train: psSeries = None,
         index_col: str = "tmp_index_col",
+        return_label: bool = False,
     ):
         # TODO: optimize this, support pyspark.sql.DataFrame
         if y_train is not None:
@@ -416,7 +429,10 @@ class SparkEstimator(BaseEstimator):
             self.df_train = X_train
         if isinstance(self.df_train, psDataFrame):
             self.df_train = self.df_train.to_spark(index_col=index_col)
-        return self.df_train
+        if return_label:
+            return self.df_train, y_train.name
+        else:
+            return self.df_train
 
     def fit(
         self,
@@ -437,7 +453,8 @@ class SparkEstimator(BaseEstimator):
         Returns:
             train_time: A float of the training time in seconds.
         """
-        df_train = self._preprocess(X_train, y_train, index_col=index_col)
+        df_train, label_col = self._preprocess(X_train, y_train, index_col=index_col, return_label=True)
+        kwargs["labelCol"] = label_col
         train_time = self._fit(df_train, **kwargs)
         return train_time
 
@@ -445,10 +462,10 @@ class SparkEstimator(BaseEstimator):
         current_time = time.time()
         pipeline_model = self.estimator_class(**self.params, **kwargs)
         if logger.level == logging.DEBUG:
-            logger.debug(f"flaml.model - {pipeline_model} fit started with params {self.params}")
+            logger.debug(f"flaml.automl.model - {pipeline_model} fit started with params {self.params}")
         pipeline_model.fit(df_train)
         if logger.level == logging.DEBUG:
-            logger.debug(f"flaml.model - {pipeline_model} fit finished")
+            logger.debug(f"flaml.automl.model - {pipeline_model} fit finished")
         train_time = time.time() - current_time
         self._model = pipeline_model
         return train_time
@@ -505,8 +522,6 @@ class SparkEstimator(BaseEstimator):
 
 class SparkLGBMEstimator(SparkEstimator):
     """The class for fine-tuning spark version lightgbm models, using SynapseML API."""
-
-    """The class for tuning LGBM, using sklearn API."""
 
     ITER_HP = "numIterations"
     DEFAULT_ITER = 100
@@ -614,7 +629,7 @@ class SparkLGBMEstimator(SparkEstimator):
         start_time = time.time()
         if self.model_n_classes_ is None and self._task not in ["regression", "rank"]:
             self.model_n_classes_, self.model_classes_ = len_labels(y_train, return_labels=True)
-        df_train = self._preprocess(X_train, y_train, index_col=index_col)
+        df_train, label_col = self._preprocess(X_train, y_train, index_col=index_col, return_label=True)
         # n_iter = self.params.get(self.ITER_HP, self.DEFAULT_ITER)
         # trained = False
         # mem0 = psutil.virtual_memory().available if psutil is not None else 1
@@ -673,6 +688,7 @@ class SparkLGBMEstimator(SparkEstimator):
         #         return time.time() - start_time
         #     # when not trained, train at least one iter
         #     self.params[self.ITER_HP] = max(max_iter, 1)
+        _kwargs["labelCol"] = label_col
         self._fit(df_train, **_kwargs)
         train_time = time.time() - start_time
         return train_time
@@ -681,12 +697,12 @@ class SparkLGBMEstimator(SparkEstimator):
         current_time = time.time()
         model = self.estimator_class(**self.params, **kwargs)
         if logger.level == logging.DEBUG:
-            logger.debug(f"flaml.model - {model} fit started with params {self.params}")
+            logger.debug(f"flaml.automl.model - {model} fit started with params {self.params}")
         self._model = model.fit(df_train)
         self._model.classes_ = self.model_classes_
         self._model.n_classes_ = self.model_n_classes_
         if logger.level == logging.DEBUG:
-            logger.debug(f"flaml.model - {model} fit finished")
+            logger.debug(f"flaml.automl.model - {model} fit finished")
         train_time = time.time() - current_time
         return train_time
 
@@ -749,7 +765,7 @@ class TransformersEstimator(BaseEstimator):
         return not self._kwargs.get("gpu_per_trial")
 
     def _set_training_args(self, **kwargs):
-        from .nlp.utils import date_str, Counter
+        from .nlp.utils import Counter, date_str
 
         for key, val in kwargs.items():
             assert key not in self.params, (
@@ -863,10 +879,10 @@ class TransformersEstimator(BaseEstimator):
 
     @property
     def data_collator(self):
-        from flaml.automl.task.task import Task
         from flaml.automl.nlp.huggingface.data_collator import (
             task_to_datacollator_class,
         )
+        from flaml.automl.task.task import Task
 
         data_collator_class = task_to_datacollator_class.get(
             self._task.name if isinstance(self._task, Task) else self._task
@@ -907,6 +923,7 @@ class TransformersEstimator(BaseEstimator):
 
         from transformers import TrainerCallback
         from transformers.trainer_utils import set_seed
+
         from .nlp.huggingface.trainer import TrainerForAuto
 
         try:
@@ -1136,6 +1153,7 @@ class TransformersEstimator(BaseEstimator):
     def predict(self, X, **pred_kwargs):
         import transformers
         from datasets import Dataset
+
         from .nlp.huggingface.utils import postprocess_prediction_and_true
 
         transformers.logging.set_verbosity_error()
@@ -1296,17 +1314,10 @@ class LGBMEstimator(BaseEstimator):
             self.params["verbose"] = -1
 
         if self._task.is_classification():
-            from lightgbm import LGBMClassifier
-
             self.estimator_class = LGBMClassifier
-
         elif task == "rank":
-            from lightgbm import LGBMRanker
-
             self.estimator_class = LGBMRanker
         else:
-            from lightgbm import LGBMRegressor
-
             self.estimator_class = LGBMRegressor
 
         self._time_per_iter = None
@@ -1410,7 +1421,7 @@ class LGBMEstimator(BaseEstimator):
                 callbacks = self.params.pop("callbacks")
                 self._model.set_params(callbacks=callbacks[:-1])
             best_iteration = (
-                self._model.get_booster().best_iteration
+                getattr(self._model.get_booster(), "best_iteration", None)
                 if isinstance(self, XGBoostSklearnEstimator)
                 else self._model.best_iteration_
             )
@@ -1506,7 +1517,10 @@ class XGBoostEstimator(SKLearnEstimator):
             params["grow_policy"] = params.get("grow_policy", "lossguide")
             params["tree_method"] = params.get("tree_method", "hist")
         # params["booster"] = params.get("booster", "gbtree")
-        params["use_label_encoder"] = params.get("use_label_encoder", False)
+
+        # use_label_encoder is deprecated in 1.7.
+        if xgboost_version < "1.7.0":
+            params["use_label_encoder"] = params.get("use_label_encoder", False)
         if "n_jobs" in config:
             params["nthread"] = params.pop("n_jobs")
         return params
@@ -1552,7 +1566,7 @@ class XGBoostEstimator(SKLearnEstimator):
                 obj=obj,
                 callbacks=callbacks,
             )
-            self.params["n_estimators"] = self._model.best_iteration + 1
+            self.params["n_estimators"] = getattr(self._model, "best_iteration", _n_estimators - 1) + 1
         else:
             self._model = xgb.train(self.params, dtrain, _n_estimators, obj=obj)
             self.params["n_estimators"] = _n_estimators
@@ -1613,7 +1627,9 @@ class XGBoostSklearnEstimator(SKLearnEstimator, LGBMEstimator):
         if max_depth == 0:
             params["grow_policy"] = params.get("grow_policy", "lossguide")
             params["tree_method"] = params.get("tree_method", "hist")
-        params["use_label_encoder"] = params.get("use_label_encoder", False)
+        # use_label_encoder is deprecated in 1.7.
+        if xgboost_version < "1.7.0":
+            params["use_label_encoder"] = params.get("use_label_encoder", False)
         return params
 
     def __init__(

@@ -1,5 +1,7 @@
 from functools import wraps
+
 from flaml.automl.task.task import CLASSIFICATION
+
 from .suggest import preprocess_and_suggest_hyperparams
 
 DEFAULT_LOCATION = "default_location"
@@ -38,10 +40,10 @@ def flamlize_estimator(super_class, name: str, task: str, alternatives=None):
             self._params = params
             super().__init__(**params)
 
-        @classmethod
-        @wraps(super_class._get_param_names)
-        def _get_param_names(cls):
-            return super_class._get_param_names()
+        # @classmethod
+        # @wraps(super_class._get_param_names)
+        # def _get_param_names(cls):
+        #     return super_class._get_param_names() if hasattr(super_class, "_get_param_names") else []
 
         def suggest_hyperparams(self, X, y):
             """Suggest hyperparameters.
@@ -105,7 +107,12 @@ def flamlize_estimator(super_class, name: str, task: str, alternatives=None):
                 # if hasattr(self, "_classes"):
                 #     self._classes = self._label_transformer.classes_
                 # else:
-                self.classes_ = self._label_transformer.classes_
+                try:
+                    self.classes_ = self._label_transformer.classes_
+                except AttributeError:
+                    # xgboost 2: AttributeError: can't set attribute
+                    if "xgb" not in estimator_name:
+                        raise
                 if "xgb" not in estimator_name:
                     # rf and et would do inverse transform automatically; xgb doesn't
                     self._label_transformer = None
@@ -179,3 +186,6 @@ else:
         "classification",
         [("max_depth", 0, "xgboost")],
     )
+    # if hasattr(xgboost.XGBRegressor, "_get_param_names"):
+    #     XGBRegressor._get_param_names = xgboost.XGBRegressor._get_param_names
+    #     XGBClassifier._get_param_names = xgboost.XGBClassifier._get_param_names

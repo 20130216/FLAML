@@ -1,14 +1,16 @@
-import numpy as np
-import logging
-import time
-import math
-import copy
 import collections
+import copy
+import logging
+import math
+import time
 from typing import Optional, Union
+
+import numpy as np
+
 from flaml.tune import Trial
 
 try:
-    from sklearn.metrics import mean_squared_error, mean_absolute_error
+    from sklearn.metrics import mean_absolute_error, mean_squared_error
 except ImportError:
     pass
 
@@ -76,7 +78,7 @@ class OnlineResult:
             init_cb: a float to specify the intial confidence bound.
             mode: A string in ['min', 'max'] to specify the objective as
                 minimization or maximization.
-            sliding_window_size: An int to specify the size of the sliding windown
+            sliding_window_size: An int to specify the size of the sliding window
                 (for experimental purpose).
         """
         self._result_type_name = result_type_name  # for example 'mse' or 'mae'

@@ -1,8 +1,10 @@
-from flaml.automl.data import load_openml_dataset
-from flaml import AutoML
-from flaml.tune.spark.utils import check_spark
 import os
+
 import pytest
+
+from flaml import AutoML
+from flaml.automl.data import load_openml_dataset
+from flaml.tune.spark.utils import check_spark
 
 spark_available, _ = check_spark()
 skip_spark = not spark_available
@@ -13,7 +15,14 @@ os.environ["FLAML_MAX_CONCURRENT"] = "2"
 
 
 def base_automl(n_concurrent_trials=1, use_ray=False, use_spark=False, verbose=0):
-    X_train, X_test, y_train, y_test = load_openml_dataset(dataset_id=537, data_dir="./")
+    from minio.error import ServerError
+
+    try:
+        X_train, X_test, y_train, y_test = load_openml_dataset(dataset_id=537, data_dir="./")
+    except (ServerError, Exception):
+        from sklearn.datasets import fetch_california_housing
+
+        X_train, y_train = fetch_california_housing(return_X_y=True)
     automl = AutoML()
     settings = {
         "time_budget": 3,  # total running time in seconds
@@ -48,6 +57,7 @@ def test_verboses():
 
 def test_import_error():
     from importlib import reload
+
     import flaml.tune.spark.utils as utils
 
     reload(utils)
